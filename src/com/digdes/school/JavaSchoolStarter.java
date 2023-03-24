@@ -1,203 +1,292 @@
 package com.digdes.school;
 
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class JavaSchoolStarter {
-
-    public static void main(String... args){
-        JavaSchoolStarter starter = new JavaSchoolStarter();
-        try {
-            //Вставка строки в коллекцию
-            List<Map<String,Object>> result1 = starter.execute("INSERT VALUES 'lastName' = 'Федоров' , 'id'=3, 'age'=40, 'active'=true");
-            System.out.println("INSERT: " + result1);
-            //Изменение значения которое выше записывали
-            List<Map<String,Object>> result2 = starter.execute("UPDATE VALUES 'active'=false, 'cost'=10.1 where 'id'=3");
-            System.out.println("UPDATE: " + result2);
-            //Получение всех данных из коллекции (т.е. в данном примере вернется 1 запись)
-            List<Map<String,Object>> result3 = starter.execute("SELECT");
-            System.out.println("SELECT: " + result3);
-
-        }catch (Exception ex){
-            ex.printStackTrace();
-        }
-    }
-    private List<Map<String, Object>> data;
+    private final List<Map<String, Object>> collection = new ArrayList<>();
 
     public JavaSchoolStarter() {
-        data = new ArrayList<>();
     }
 
-    public List<Map<String, Object>> execute(String command) {
-        String[] tokens = command.trim().split(" ", 2);
-        String operation = tokens[0].toUpperCase(Locale.ROOT);
-
-        switch (operation) {
-            case "INSERT":
-                return insert(tokens[1]);
-            case "UPDATE":
-                return update(tokens[1]);
-            case "DELETE":
-                return delete(tokens[1]);
-            case "SELECT":
-                return select(tokens.length > 1 ? tokens[1] : "");
-            default:
-                throw new IllegalArgumentException("Invalid operation: " + operation);
-        }
-    }
-
-    private List<Map<String, Object>> insert(String values) {
-        Map<String, Object> newRow = parseValues(values);
-        data.add(newRow);
-        return Collections.singletonList(newRow);
-    }
-
-    private List<Map<String, Object>> update(String conditions) {
-        String[] parts = conditions.split("(?i) WHERE ", 2);
-        Map<String, Object> newValues = parseValues(parts[0]);
-        List<Map<String, Object>> updatedRows = new ArrayList<>();
-        if (parts.length > 1) {
-            String condition = parts[1];
-            for (Map<String, Object> row : data) {
-                if (applyCondition(row, condition)) {
-                    row.putAll(newValues);
-                    updatedRows.add(row);
+    public List<Integer> findRows(List<String> keysConditionsValuesAndLogicOperators) {
+        boolean andOr = true;
+        String key, condition, value, logicOperator;
+        List<Integer> indexesRightRows = new LinkedList<>();
+        Map<String, Object> row;
+        int size = keysConditionsValuesAndLogicOperators.size();
+        for (int i = 0; i < size; i += 4) {
+            key = keysConditionsValuesAndLogicOperators.get(i);
+            condition = keysConditionsValuesAndLogicOperators.get(i + 1);
+            value = keysConditionsValuesAndLogicOperators.get(i + 2);
+            if (andOr) {
+                for (int j = 0; j < collection.size(); ++j) {
+                    row = collection.get(j);
+                    if (Utilities.determineCondition(key, condition, value, row)) {
+                        indexesRightRows.add(j);
+                    }
+                }
+            } else {
+                int sizeIndexes = indexesRightRows.size();
+                for (int k = 0; k < sizeIndexes; ++k) {
+                    Integer index = indexesRightRows.get(k);
+                    row = collection.get(index);
+                    if (!Utilities.determineCondition(key, condition, value, row)) {
+                        indexesRightRows.remove(index);
+                        if (!indexesRightRows.isEmpty()) {
+                            k--;
+                            sizeIndexes--;
+                        }
+                    }
                 }
             }
-        } else {
-            data.forEach(row -> row.putAll(newValues));
-            updatedRows.addAll(data);
+            if (i + 4 < size) {
+                logicOperator = keysConditionsValuesAndLogicOperators.get(i + 4);
+                andOr = "OR".equalsIgnoreCase(logicOperator);
+            }
         }
-        return updatedRows;
+        return indexesRightRows;
     }
 
-    private List<Map<String, Object>> delete(String conditions) {
-        String[] parts = conditions.split("(?i) WHERE ", 2);
-        List<Map<String, Object>> removedRows = new ArrayList<>();
-        if (parts.length > 1) {
-            String condition = parts[1];
-            Iterator<Map<String, Object>> iterator = data.iterator();
-            while (iterator.hasNext()) {
-                Map<String, Object> row = iterator.next();
-                if (applyCondition(row, condition)) {
-                    iterator.remove();
-                    removedRows.add(row);
+    private List<String> getKeysConditionsValuesAndLogicOperators(List<String> wordsFromRequest) throws AppException {
+        List<String> keysConditionValue = new ArrayList<>();
+        Status status = Status.GET_KEY;
+        String key = "", condition = "";
+        boolean isMistake = true;
+        for (int i = 2; i < wordsFromRequest.size(); ++i) {
+            String word = wordsFromRequest.get(i);
+            switch (status) {
+                case GET_KEY -> {
+                    isMistake = true;
+                    word = word.substring(1, word.length() - 1);
+                    if (!Utilities.checkCorrectnessKey(word)) throw new AppException(Messages.WRONG_KEY + word);
+                    key = word.toLowerCase();
+                    status = Status.GET_CONDITION;
+                }
+                case GET_CONDITION -> {
+                    if (!Utilities.checkCorrectnessCondition(key, word))
+                        throw new AppException(Messages.WRONG_CONDITION + key);
+                    condition = word;
+                    status = Status.GET_VALUE;
+                }
+                case GET_VALUE -> {
+                    isMistake = false;
+                    if (word.equalsIgnoreCase("null"))
+                        throw new AppException(Messages.FIND_NULL + key);
+                    if (!Utilities.checkCorrectnessValue(key, word))
+                        throw new AppException(Messages.WRONG_VALUE_FOR_COMPARE + key);
+                    if (word.contains("’") || word.contains("'")) word = word.substring(1, word.length() - 1);
+                    keysConditionValue.add(key);
+                    keysConditionValue.add(condition);
+                    keysConditionValue.add(word);
+                    status = Status.GET_LOGIC_OPERATOR;
+                }
+                case GET_LOGIC_OPERATOR -> {
+                    if ("OR".equalsIgnoreCase(word) || "AND".equalsIgnoreCase(word)) {
+                        if (i == wordsFromRequest.size() - 1) throw new AppException(Messages.REQUEST_NOT_DONE);
+                        keysConditionValue.add(word);
+                        status = Status.GET_KEY;
+                    } else
+                        throw new AppException(Messages.MISS_LOGIC_OPERATOR + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
+                }
+                default -> throw new AppException(Messages.WRONG_REQUEST);
+            }
+        }
+        if (isMistake) throw new AppException(Messages.WRONG_REQUEST);
+        return keysConditionValue;
+    }
+
+    private List<Map<String, Object>> executeUpdate(List<String> wordsFromRequest) throws AppException {
+        List<String> keys = new LinkedList<>(List.of("id", "lastname", "age", "cost", "active"));
+        List<String> keysConditionValue = new ArrayList<>();
+        List<Map<String, Object>> updatedValues = new ArrayList<>();
+        Map<String, Object> row = new HashMap<>(), collectionRow;
+        Status status = Status.GET_KEY;
+        String key = "", condition = "";
+        boolean existsWhere = false, isMistake = true;
+        for (int i = 2; i < wordsFromRequest.size(); ++i) {
+            String word = wordsFromRequest.get(i);
+            if (Utilities.isWhere(word)) {
+                existsWhere = true;
+                status = Status.GET_KEY;
+                continue;
+            }
+            switch (status) {
+                case GET_KEY -> {
+                    isMistake = true;
+                    word = word.substring(1, word.length() - 1);
+                    if (!Utilities.checkCorrectnessKey(word)) throw new AppException(Messages.WRONG_KEY + word);
+                    key = word.toLowerCase();
+                    status = existsWhere ? Status.GET_CONDITION : Status.ONLY_EQUAL;
+                }
+                case ONLY_EQUAL -> {
+                    if (!"=".equals(word))
+                        throw new AppException(Messages.MISS_EQUAL + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
+                    status = Status.GET_VALUE;
+                }
+                case GET_CONDITION -> {
+                    if (!Utilities.checkCorrectnessCondition(key, word))
+                        throw new AppException(Messages.WRONG_CONDITION + key);
+                    condition = word;
+                    status = Status.GET_VALUE;
+                }
+                case GET_VALUE -> {
+                    isMistake = false;
+                    if (existsWhere) {
+                        if (word.equalsIgnoreCase("null"))
+                            throw new AppException(Messages.FIND_NULL + key);
+                        if (!Utilities.checkCorrectnessValue(key, word))
+                            throw new AppException(Messages.WRONG_VALUE_FOR_COMPARE + key);
+                        if (word.contains("’") || word.contains("'")) word = word.substring(1, word.length() - 1);
+                        keysConditionValue.add(key);
+                        keysConditionValue.add(condition);
+                        keysConditionValue.add(word);
+                        status = Status.GET_LOGIC_OPERATOR;
+                    } else {
+                        if (!Utilities.checkCorrectnessValue(key, word))
+                            throw new AppException(Messages.WRONG_VALUE + key);
+                        if (word.contains("’") || word.contains("'")) word = word.substring(1, word.length() - 1);
+                        if (!keys.isEmpty()) {
+                            if (!keys.remove(key)) throw new AppException(Messages.REPEAT_KEY + key);
+                        } else throw new AppException(Messages.WRONG_REQUEST);
+                        row.put(key, word);
+                        status = Status.CHECK_SEPARATOR;
+                    }
+                }
+                case GET_LOGIC_OPERATOR -> {
+                    if ("OR".equalsIgnoreCase(word) || "AND".equalsIgnoreCase(word)) {
+                        if (i == wordsFromRequest.size() - 1) throw new AppException(Messages.REQUEST_NOT_DONE);
+                        keysConditionValue.add(word);
+                        status = Status.GET_KEY;
+                    } else
+                        throw new AppException(Messages.MISS_LOGIC_OPERATOR + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
+                }
+                case CHECK_SEPARATOR -> {
+                    if (",".equals(word)) {
+                        if (i == wordsFromRequest.size() - 1) throw new AppException(Messages.REQUEST_NOT_DONE);
+                        status = Status.GET_KEY;
+                    } else
+                        throw new AppException(Messages.MISS_COMMA + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
                 }
             }
-        } else {
-            removedRows.addAll(data);
-            data.clear();
         }
-        return removedRows;
+        if (isMistake) throw new AppException(Messages.WRONG_REQUEST);
+        List<Integer> indexesRightRows = findRows(keysConditionValue);
+        if (indexesRightRows.isEmpty()) DialogUtil.showInfoMessage(Messages.UPDATE_NOT_FOUND);
+        else DialogUtil.showSuccessMessage(Messages.UPDATE_SUCCESS);
+        for (Integer index : indexesRightRows) {
+            collectionRow = collection.get(index);
+            for (String k : row.keySet())
+                collectionRow.replace(k, row.get(k));
+            updatedValues.add(collectionRow);
+        }
+        return updatedValues;
     }
 
-    private List<Map<String, Object>> select(String conditions) {
-        String[] parts = conditions.split("(?i) WHERE ", 2);
-        if (parts.length > 1) {
-            String condition = parts[1];
-            return data.stream()
-                    .filter(row -> applyCondition(row, condition))
-                    .collect(Collectors.toList());
-        } else {
-            return new ArrayList<>(data);
-        }
-    }
-
-    private Map<String, Object> parseValues(String valuesString) {
-        String[] keyValuePairs = valuesString.split(",");
-        Map<String, Object> values = new LinkedHashMap<>();
-        for (String keyValuePair : keyValuePairs) {
-            String[] parts = keyValuePair.split("=", 2);
-            String key = parts[0].trim().toLowerCase(Locale.ROOT);
-            if (key.startsWith("'") && key.endsWith("'")) {
-                key = key.substring(1, key.length() - 1);
+    private List<Map<String, Object>> executeInsert(List<String> wordsFromRequest) throws AppException {
+        List<String> keys = new LinkedList<>(List.of("id", "lastname", "age", "cost", "active"));
+        List<Map<String, Object>> insertedValues = new ArrayList<>();
+        Map<String, Object> row = new HashMap<>();
+        Status status = Status.GET_KEY;
+        String key = "";
+        boolean isMistake = true;
+        for (int i = 2; i < wordsFromRequest.size(); ++i) {
+            String word = wordsFromRequest.get(i);
+            switch (status) {
+                case GET_KEY -> {
+                    word = word.substring(1, word.length() - 1);
+                    if (!Utilities.checkCorrectnessKey(word)) throw new AppException(Messages.WRONG_KEY + word);
+                    key = word.toLowerCase();
+                    status = Status.ONLY_EQUAL;
+                    isMistake = true;
+                }
+                case ONLY_EQUAL -> {
+                    if (!"=".equals(word))
+                        throw new AppException(Messages.MISS_EQUAL + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
+                    status = Status.GET_VALUE;
+                }
+                case GET_VALUE -> {
+                    if (!Utilities.checkCorrectnessValue(key, word))
+                        throw new AppException(Messages.WRONG_VALUE + key);
+                    if (word.contains("’") || word.contains("'")) word = word.substring(1, word.length() - 1);
+                    if (!keys.isEmpty()) {
+                        if (!keys.remove(key)) throw new AppException(Messages.REPEAT_KEY + key);
+                    } else throw new AppException(Messages.WRONG_REQUEST);
+                    row.put(key, word);
+                    status = Status.CHECK_SEPARATOR;
+                    isMistake = false;
+                }
+                case CHECK_SEPARATOR -> {
+                    if (",".equals(word)) {
+                        if (i == wordsFromRequest.size() - 1) throw new AppException(Messages.REQUEST_NOT_DONE);
+                        status = Status.GET_KEY;
+                    } else
+                        throw new AppException(Messages.MISS_COMMA + wordsFromRequest.get(i - 1) + " и " + wordsFromRequest.get(i + 1));
+                }
+                default -> isMistake = true;
             }
-            Object value = parseValue(parts[1].trim());
-            values.put(key, value);
         }
-        return values;
+        if (isMistake) throw new AppException(Messages.WRONG_REQUEST);
+        for (String k : keys) row.put(k, null);
+        collection.add(row);
+        insertedValues.add(row);
+        DialogUtil.showSuccessMessage(Messages.INSERT_SUCCESS);
+        return insertedValues;
     }
 
-    private Object parseValue(String value) {
-        if (value.startsWith("'") && value.endsWith("'")) {
-            return value.substring(1, value.length() - 1);
-        }
-        if (value.equalsIgnoreCase("true")) {
-            return true;
-        }
-        if (value.equalsIgnoreCase("false")) {
-            return false;
-        }
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException e1) {
-            try {
-                return Double.parseDouble(value);
-            } catch (NumberFormatException e2) {
-                throw new IllegalArgumentException("Invalid value: " + value);
+
+    private List<Map<String, Object>> executeDelete(List<String> wordsFromRequest) throws AppException {
+        List<Map<String, Object>> deletedValues = new ArrayList<>();
+        if (wordsFromRequest.size() > 1 && !Utilities.isWhere(wordsFromRequest.get(1)))
+            throw new AppException(Messages.WRONG_REQUEST);
+        else if (wordsFromRequest.size() == 1) collection.clear();
+        else {
+            List<String> keysConditionsValuesLogicOperators = getKeysConditionsValuesAndLogicOperators(wordsFromRequest);
+            List<Integer> indexesRightRows = findRows(keysConditionsValuesLogicOperators);
+            int size = indexesRightRows.size();
+            for (int i = 0; i < size; size--) {
+                int index = indexesRightRows.get(i);
+                deletedValues.add(collection.get(index));
+                collection.remove(index);
             }
+            if(size != 0) DialogUtil.showSuccessMessage(Messages.DELETE_SUCCESS);
+            else DialogUtil.showInfoMessage(Messages.DELETE_NOT_FOUND);
         }
+        return deletedValues;
     }
 
-    private boolean applyCondition(Map<String, Object> row, String condition) {
-        if (condition == null || condition.isEmpty()) {
-            return true;
+
+    private List<Map<String, Object>> executeSelect(List<String> wordsFromRequest) throws AppException {
+        List<Map<String, Object>> selectedValues = new ArrayList<>();
+        if (wordsFromRequest.size() > 1 && !Utilities.isWhere(wordsFromRequest.get(1)))
+            throw new AppException(Messages.WRONG_REQUEST);
+        else if (wordsFromRequest.size() == 1) selectedValues = collection;
+        else {
+            List<String> keysConditionsValuesLogicOperators = getKeysConditionsValuesAndLogicOperators(wordsFromRequest);
+            List<Integer> indexesRightRows = findRows(keysConditionsValuesLogicOperators);
+            for (int index : indexesRightRows) selectedValues.add(collection.get(index));
         }
-
-        Pattern pattern = Pattern.compile("('?\\w+'?)\\s*(=|!=|>|<|>=|<=)\\s*(.*)");
-        Matcher matcher = pattern.matcher(condition);
-        if (!matcher.matches()) {
-            throw new IllegalArgumentException("Invalid condition: " + condition);
-        }
-
-        String columnName = matcher.group(1);
-        if (columnName.startsWith("'") && columnName.endsWith("'")) {
-            columnName = columnName.substring(1, columnName.length() - 1);
-        }
-
-        String operator = matcher.group(2);
-        Object value = parseValue(matcher.group(3));
-
-        if (!row.containsKey(columnName)) {
-            throw new IllegalArgumentException("Invalid column name: " + columnName);
-        }
-
-        return compare(row.get(columnName), value, operator);
+        if (selectedValues.isEmpty()) DialogUtil.showInfoMessage(Messages.SELECT_NOT_FOUND);
+        else DialogUtil.showSuccessMessage(Messages.SELECT_SUCCESS);
+        return selectedValues;
     }
 
-    private boolean compare(Object columnValue, Object value, String operator) {
-        if (columnValue == null) {
-            return !operator.equals("=");
-        }
+    public List<Map<String, Object>> execute(String request) throws AppException {
+        List<Map<String, Object>> result;
+        List<String> wordsRequest = Utilities.getWordsFromString(request);
+        switch (wordsRequest.get(0).toUpperCase()) {
+            case "SELECT" -> result = executeSelect(wordsRequest);
+            case "INSERT" -> {
+                if ("VALUES".equalsIgnoreCase(wordsRequest.get(1))) result = executeInsert(wordsRequest);
+                else throw new AppException(Messages.MISS_VALUES);
+            }
+            case "UPDATE" -> {
+                if ("VALUES".equalsIgnoreCase(wordsRequest.get(1))) result = executeUpdate(wordsRequest);
+                else throw new AppException(Messages.MISS_VALUES);
+            }
+            case "DELETE" -> result = executeDelete(wordsRequest);
 
-        if (value == null) {
-            return !operator.equals("!=");
+            default -> throw new AppException(Messages.MISS_KEYWORD);
         }
-
-        int comparisonResult;
-        if (columnValue instanceof Comparable && value instanceof Comparable) {
-            comparisonResult = ((Comparable) columnValue).compareTo(value);
-        } else {
-            throw new IllegalArgumentException("Invalid comparison between " + columnValue + " and " + value);
-        }
-
-        switch (operator) {
-            case "=":
-                return comparisonResult == 0;
-            case "!=":
-                return comparisonResult != 0;
-            case ">":
-                return comparisonResult > 0;
-            case "<":
-                return comparisonResult < 0;
-            case ">=":
-                return comparisonResult >= 0;
-            case "<=":
-                return comparisonResult <= 0;
-            default:
-                throw new IllegalArgumentException("Invalid operator: " + operator);
-        }
+        return result;
     }
 }
